@@ -1,0 +1,307 @@
+package org.cschallenge.pinball.engine;
+
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
+
+import java.awt.BorderLayout;
+import java.awt.Color;
+import java.awt.Dimension;
+import java.awt.Graphics2D;
+import java.awt.GraphicsConfiguration;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
+
+import javax.swing.JButton;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JMenu;
+import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
+import javax.swing.JPanel;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
+import javax.swing.WindowConstants;
+
+import org.cschallenge.pinball.engine.PinballEngine.Result;
+import org.jdesktop.core.animation.rendering.JRenderer;
+import org.jdesktop.core.animation.rendering.JRendererTarget;
+import org.jdesktop.core.animation.timing.TimingSource;
+import org.jdesktop.core.animation.timing.TimingSource.TickListener;
+import org.jdesktop.swing.animation.rendering.JRendererFactory;
+import org.jdesktop.swing.animation.rendering.JRendererPanel;
+import org.jdesktop.swing.animation.timing.sources.SwingTimerTimingSource;
+
+public class PinballFrame implements JRendererTarget<GraphicsConfiguration, Graphics2D> {
+	
+	public static final int ANIMATION_SPEED = 4;
+	public static final int TICKS_PER_TURN = GamePiece.SIZE_PX / ANIMATION_SPEED;
+	
+	private static final String RESOURCE_PATH = "org/cschallenge/pinball/resources/";
+	private static final int TIMER_FREQUENCY_MILLIS = 20;
+	
+	private static PinballFrame theApp;
+	private int ticks = 0;
+	private boolean gameOver = false;
+	private int ticksRemaining = TICKS_PER_TURN;
+	private static String[] myArgs = new String[4];
+	
+	/**
+	 * Used to update the FPS display once a second.
+	 */
+	static final TimingSource gameTimer = new SwingTimerTimingSource(TIMER_FREQUENCY_MILLIS, MILLISECONDS);
+
+	public static URL getResource(String name) {
+		final URL url = Thread.currentThread().getContextClassLoader().getResource(RESOURCE_PATH + name);
+		if (url == null) {
+			throw new IllegalStateException("Unable to load: " + name);
+		} else {
+			return url;
+		}
+	}
+
+	public static void main(String[] args) {
+		System.setProperty("swing.defaultlaf", "com.sun.java.swing.plaf.nimbus.NimbusLookAndFeel");
+		
+		if(args.length == 4) {
+			System.arraycopy(args, 0, myArgs, 0, 4);
+		}
+		
+		SwingUtilities.invokeLater(new Runnable() {
+			@Override
+			public void run() {
+				theApp = new PinballFrame();
+				theApp.start();
+			}
+		});
+	}
+
+	final JFrame frame;
+	final JRendererPanel panel;
+	final JRenderer renderer;
+	final PinballEngine engine;
+	JLabel labelP1;
+	JLabel labelP2;
+	JLabel labelP3;
+	JLabel labelJ1;
+	JLabel labelJ2;
+	JLabel labelJ3;
+	boolean isPaused = false;
+	boolean isStep = false;
+	JMenuItem menuItem;
+	
+	private void flipName() {
+		if (isPaused) {
+			menuItem.setText("Play");
+		} else {
+			menuItem.setText("Pause");
+		}
+	}
+	
+	public PinballFrame() {
+		final String rendererType = JRendererFactory.useActiveRenderer() ? "Active" : "Passive";
+		/*
+		A Frame is a top-level window with a title and a border. The size of the frame includes any area 
+		designated for the border. The dimensions of the border area may be obtained using the getInsets 
+		method. Since the border area is included in the overall size of the frame, the border effectively 
+		obscures a portion of the frame, constraining the area available for rendering  and/or displaying 
+		subcomponents to the rectangle which has an upper-left corner location of (insets.left, insets.top), 
+		and has a size of width - (insets.left + insets.right) by height - (insets.top + insets.bottom).
+		 */
+		frame = new JFrame("Pinball Challenge -- " + rendererType + " Rendering");
+		frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
+		frame.addWindowListener(new WindowAdapter() {
+			@Override
+			public void windowClosed(WindowEvent e) {
+				super.windowClosed(e);
+				gameTimer.dispose();
+				renderer.getTimingSource().dispose();
+				renderer.shutdown();
+			}
+		});
+		frame.setLayout(new BorderLayout());
+		
+		panel = new JRendererPanel();
+		JPanel bottomPanel = new JPanel();
+		JPanel topPanel = new JPanel();
+		
+		frame.add(panel, BorderLayout.CENTER);
+		frame.add(topPanel, BorderLayout.NORTH);
+		frame.add(bottomPanel, BorderLayout.SOUTH);
+		
+		panel.setBackground(Color.white);
+		renderer = JRendererFactory.getDefaultRenderer(panel, this, false);
+		
+		JMenuBar menuBar;
+		JMenu menu;
+		
+		menuBar = new JMenuBar();
+		menu = new JMenu("Control");
+		menu.setMnemonic(KeyEvent.VK_A);
+		menu.getAccessibleContext().setAccessibleDescription("Command for controling flow of program");
+		menuBar.add(menu);
+		menuItem = new JMenuItem("Pause");
+		menuItem.setMnemonic(KeyEvent.VK_B);
+		menuItem.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_P, ActionEvent.SHIFT_MASK));
+		menu.add(menuItem);
+		
+		menuItem.addActionListener(new ActionListener() {
+			@Override
+		    public void actionPerformed(ActionEvent arg0) {
+				isPaused = !isPaused;
+				flipName();
+			}
+		});
+		JMenuItem stepper = new JMenuItem("Step");
+		stepper.setMnemonic(KeyEvent.VK_C);
+		stepper.setAccelerator(KeyStroke.getKeyStroke(KeyEvent.VK_S, ActionEvent.SHIFT_MASK));
+		menu.add(stepper);
+		
+		stepper.addActionListener(new ActionListener() {
+			@Override
+		    public void actionPerformed(ActionEvent arg0) {
+				isStep = true;
+			}
+		});
+		
+		frame.setJMenuBar(menuBar);
+		
+		
+		topPanel.setLayout(new BorderLayout());
+		bottomPanel.setLayout(new BorderLayout());
+		
+		JPanel holdLeft = new JPanel();
+		JPanel holdCenter = new JPanel();
+		JPanel holdRight = new JPanel();
+		
+		JPanel holdLeft2 = new JPanel();
+		JPanel holdCenter2 = new JPanel();
+		JPanel holdRight2 = new JPanel();
+		
+		
+		topPanel.add(holdLeft, BorderLayout.WEST);
+		topPanel.add(holdCenter, BorderLayout.CENTER);
+		topPanel.add(holdRight, BorderLayout.EAST);
+		
+		bottomPanel.add(holdLeft2, BorderLayout.WEST);
+		bottomPanel.add(holdCenter2, BorderLayout.CENTER);
+		bottomPanel.add(holdRight2, BorderLayout.EAST);
+		
+		JLabel resources1 = new JLabel("Collisions remaining: ");
+		labelP1 = new JLabel("0");
+		
+		JLabel resources2 = new JLabel("Collisions remaining: ");
+		labelJ1 = new JLabel("0");
+		
+		JLabel queueSize1 = new JLabel("Queue size: ");
+		labelP2 = new JLabel("0");
+		
+		JLabel queueSize2 = new JLabel("Queue size: ");
+		labelJ2 = new JLabel("0");
+		
+		holdLeft.add(resources1);
+		holdLeft.add(labelP1);
+		holdRight.add(queueSize1);
+		holdRight.add(labelP2);
+		holdLeft2.add(resources2);
+		holdLeft2.add(labelJ1);
+		holdRight2.add(queueSize2);
+		holdRight2.add(labelJ2);
+		
+		topPanel.setPreferredSize(new Dimension(Position.BOARD_SIZE_PX, 25));
+		bottomPanel.setPreferredSize(new Dimension(Position.BOARD_SIZE_PX, 25));
+		panel.setPreferredSize(new Dimension(Position.BOARD_SIZE_PX, Position.BOARD_SIZE_PX));
+		frame.pack();
+		frame.setResizable(false);
+		frame.setVisible(true);
+		
+		//frame.setSize(new Dimension(Position.BOARD_SIZE_PX + frame.getInsets().left + frame.getInsets().right + 100, 
+		//							Position.BOARD_SIZE_PX + frame.getInsets().top + frame.getInsets().bottom + 50));
+		
+		engine = new PinballEngine(myArgs);
+		
+		gameTimer.addTickListener(new TickListener() {
+			@Override
+			public void timingSourceTick(TimingSource source, long nanoTime) {
+				Result result = Result.PLAY_ON;
+				if (ticks++ % TICKS_PER_TURN == 0) {
+					if (!isPaused) {
+						result = engine.move();
+					}
+					if (isStep) {
+						result = engine.move();
+						isStep = false;
+					}
+					int[] info = engine.getInfo(1);
+					labelP1.setText(Integer.toString(info[0]));
+					labelP2.setText(Integer.toString(info[1]));
+					info = engine.getInfo(0);
+					labelJ1.setText(Integer.toString(info[0]));
+					labelJ2.setText(Integer.toString(info[1]));
+					
+					gameOver |= ( result != Result.PLAY_ON );
+				}
+				engine.setRenderingCoordinates();
+				if (gameOver) {
+					// Finish animation of current turn before stopping animation.
+					if (PinballFrame.this.ticksRemaining-- == 0) {
+						gameTimer.dispose();
+					}
+				}
+			}
+		});
+	}
+
+	final List<GamePiece> pieces = new ArrayList<GamePiece>();
+	
+	@Override
+	public void renderSetup(GraphicsConfiguration gc) {
+		// no code
+	}
+
+	@Override
+	public void renderUpdate() {
+		// no code
+	}
+	
+	public void start() {
+		gameTimer.init();
+	}
+
+	@Override
+	public void render(Graphics2D g2d, int width, int height) {
+		g2d.setBackground(Color.white);
+		g2d.clearRect(0, 0, width, height);
+
+		g2d.setColor(Color.red);
+		g2d.drawRect(0, Position.BOARD_SIZE_PX - GamePiece.SIZE_PX * 3 - 1, GamePiece.SIZE_PX * 3, GamePiece.SIZE_PX * 3);
+		g2d.setColor(Color.green);
+		g2d.drawRect(Position.BOARD_SIZE_PX - GamePiece.SIZE_PX * 3 - 1, 0, GamePiece.SIZE_PX * 3, GamePiece.SIZE_PX * 3);
+		
+		for (GamePiece piece : engine.getDeletedGamePieces()) {
+			g2d.drawImage(piece.getImage(ticks), piece.px, piece.py, null);
+		}
+		
+		for (GamePiece piece : engine.getGamePiecesZOrdered()) {
+			g2d.drawImage(piece.getImage(ticks), piece.px, piece.py, null);
+		}
+	}
+
+	public int getWidth() {
+		return frame.getWidth() - (frame.getInsets().right + frame.getInsets().left);
+	}
+	
+	public int getHeight() {
+		return frame.getHeight() - (frame.getInsets().top + frame.getInsets().bottom);
+	}
+
+	@Override
+	public void renderShutdown() {
+		// no code
+	}
+}
+

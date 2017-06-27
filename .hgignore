@@ -1,0 +1,6 @@
+syntax: regexp
+^bin$
+^target$
+.DS_Store
+^RFA.*\.log$
+log
